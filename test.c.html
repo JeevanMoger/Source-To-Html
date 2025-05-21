@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<title>sode2html</title>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body style="background-color:lightgrey;">
+<pre>
+<span class="comment">/* this is multi-line comment */</span>
+<span class="comment">// SOURCE TO HTML
+</span><span class="preprocess_dir">#include </span><span class="header_file">&ltstdio.h&gt</span>
+<span class="preprocess_dir">#include </span><span class="header_file">"stdlib.h"</span>
+<span class="preprocess_dir">#include </span><span class="header_file">&ltstring.h&gt</span>
+<span class="preprocess_dir">#define HELLO -</span><span class="numeric_constant">2</span>
+<span class="reserved_key1">int</span> main()
+{
+    printf(<span class="string">"hello world\n"</span>);
+    <span class="reserved_key1">char</span> ch = <span class="ascii_char">'a'</span>;
+    <span class="reserved_key2">sizeof</span>(ch);
+    <span class="reserved_key1">int</span> num = <span class="numeric_constant">123</span>;
+    <span class="reserved_key2">for</span>(<span class="reserved_key1">int</span> i = <span class="numeric_constant">0 </span>; i < num ; i++)
+    {
+        printf(<span class="string">"SOURCE TO HTML\n"</span>);
+    }
+    <span class="reserved_key2">while</span>( <span class="numeric_constant">1 </span>)
+    {
+        printf(<span class="string">"HELLO"</span>);
+    }   
+    <span class="reserved_key2">switch</span>(ch)
+    {
+        <span class="reserved_key2">case</span> <span class="ascii_char">'a'</span>: printf(<span class="string">"CASE 1 \n"</span>);
+         <span class="reserved_key2">break</span>;
+        <span class="reserved_key2">case</span> <span class="ascii_char">'b'</span> : printf(<span class="string">"CASE 2\n"</span>);
+         <span class="reserved_key2">break</span>;
+         <span class="reserved_key2">default</span> : printf(<span class="string">"DEFAULT CASE \n"</span>);
+    }                                            
+}
+</pre>
+</body>
+</html>

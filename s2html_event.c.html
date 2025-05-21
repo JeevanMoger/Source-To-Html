@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<title>sode2html</title>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body style="background-color:lightgrey;">
+<pre>
+
+<span class="preprocess_dir">#include </span><span class="header_file">&ltstdio.h&gt</span>
+<span class="preprocess_dir">#include </span><span class="header_file">&ltstring.h&gt</span>
+<span class="preprocess_dir">#include </span><span class="header_file">&ltctype.h&gt</span>
+<span class="preprocess_dir">#include </span><span class="header_file">"s2html_event.h"</span>
+
+<span class="preprocess_dir">#define SIZE_OF_SYMBOLS </span>(<span class="reserved_key2">sizeof</span>(symbols))
+<span class="preprocess_dir">#define SIZE_OF_OPERATORS </span>(<span class="reserved_key2">sizeof</span>(operators))
+<span class="preprocess_dir">#define WORD_BUFF_SIZE	</span><span class="numeric_constant">100</span>
+
+<span class="reserved_key1">int</span> user_flag;
+<span class="comment">/********** Internal states and event of parser **********/</span>
+<span class="reserved_key1">typedef</span> <span class="reserved_key1">enum</span>
+{
+	PSTATE_IDLE,
+	PSTATE_PREPROCESSOR_DIRECTIVE,
+	PSTATE_SUB_PREPROCESSOR_MAIN,
+	PSTATE_SUB_PREPROCESSOR_RESERVE_KEYWORD,
+	PSTATE_SUB_PREPROCESSOR_ASCII_CHAR,
+	PSTATE_HEADER_FILE,
+	PSTATE_RESERVE_KEYWORD,
+	PSTATE_NUMERIC_CONSTANT,
+	PSTATE_STRING,
+	PSTATE_SINGLE_LINE_COMMENT,
+	PSTATE_MULTI_LINE_COMMENT,
+	PSTATE_ASCII_CHAR
+}pstate_e;
+
+<span class="comment">/********** global variables **********/</span>
+
+<span class="comment">/* parser state variable */</span>
+<span class="reserved_key1">static</span> pstate_e state = PSTATE_IDLE;
+
+<span class="comment">/* sub state is used only in preprocessor state */</span>
+<span class="reserved_key1">static</span> pstate_e state_sub = PSTATE_SUB_PREPROCESSOR_MAIN;
+
+<span class="comment">/* event variable to store event and related properties */</span>
+<span class="reserved_key1">static</span> pevent_t pevent_data;
+<span class="reserved_key1">static</span> <span class="reserved_key1">int</span> event_data_idx = <span class="numeric_constant">0</span>;
+
+<span class="reserved_key1">static</span> <span class="reserved_key1">char</span> word[WORD_BUFF_SIZE];
+<span class="reserved_key1">static</span> <span class="reserved_key1">int</span> word_idx = <span class="numeric_constant">0</span>;
+
+
+<span class="reserved_key1">static</span> <span class="reserved_key1">char</span>* res_kwords_data[] = {<span class="string">"const"</span>, <span class="string">"volatile"</span>, <span class="string">"extern"</span>, <span class="string">"auto"</span>, <span class="string">"register"</span>,
+   						   <span class="string">"static"</span>, <span class="string">"signed"</span>, <span class="string">"unsigned"</span>, <span class="string">"short"</span>, <span class="string">"long"</span>, 
+						   <span class="string">"double"</span>, <span class="string">"char"</span>, <span class="string">"int"</span>, <span class="string">"float"</span>, <span class="string">"struct"</span>, 
+						   <span class="string">"union"</span>, <span class="string">"enum"</span>, <span class="string">"void"</span>, <span class="string">"typedef"</span>,<span class="string">"FILE"</span>,<span class="string">""</span>
+						  };
+
+<span class="reserved_key1">static</span> <span class="reserved_key1">char</span>* res_kwords_non_data[] = {<span class="string">"goto"</span>, <span class="string">"return"</span>, <span class="string">"continue"</span>, <span class="string">"break"</span>, 
+							   <span class="string">"if"</span>, <span class="string">"else"</span>, <span class="string">"for"</span>, <span class="string">"while"</span>, <span class="string">"do"</span>, 
+							   <span class="string">"switch"</span>, <span class="string">"case"</span>, <span class="string">"default"</span>,<span class="string">"sizeof"</span>, <span class="string">""</span>
+							  };
+
+<span class="reserved_key1">static</span> <span class="reserved_key1">char</span> operators[] = {<span class="ascii_char">'/'</span>, <span class="ascii_char">'+'</span>, <span class="ascii_char">'*'</span>, <span class="ascii_char">'-'</span>, <span class="ascii_char">'%'</span>, <span class="ascii_char">'='</span>, <span class="ascii_char">'<'</span>, <span class="ascii_char">'>'</span>, <span class="ascii_char">'~'</span>, <span class="ascii_char">'&'</span>, <span class="ascii_char">','</span>, <span class="ascii_char">'!'</span>, <span class="ascii_char">'^'</span>, <span class="ascii_char">'|'</span>};
+<span class="reserved_key1">static</span> <span class="reserved_key1">char</span> symbols[] = {<span class="ascii_char">'('</span>, <span class="ascii_char">')'</span>, <span class="ascii_char">'{'</span>, <span class="ascii_char">'['</span>, <span class="ascii_char">':'</span>,<span class="ascii_char">';'</span>};
+
+<span class="comment">/********** state handlers **********/</span>
+pevent_t * pstate_idle_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+pevent_t * pstate_single_line_comment_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+pevent_t * pstate_multi_line_comment_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+pevent_t * pstate_numeric_constant_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+pevent_t * pstate_string_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+pevent_t * pstate_header_file_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+pevent_t * pstate_ascii_char_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+pevent_t * pstate_reserve_keyword_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+pevent_t * pstate_preprocessor_directive_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+pevent_t * pstate_sub_preprocessor_main_handler(FILE *fd, <span class="reserved_key1">int</span> ch);
+
+<span class="comment">/********** Utility functions **********/</span>
+
+<span class="comment">/* function to check if given word is reserved key word */</span>
+<span class="reserved_key1">static</span> <span class="reserved_key1">int</span> is_reserved_keyword(<span class="reserved_key1">char</span> *word)
+{
+	<span class="reserved_key1">int</span> idx = <span class="numeric_constant">0</span>;
+
+	<span class="comment">/* search for data type reserved keyword */</span>
+	<span class="reserved_key2">while</span>(*res_kwords_data[idx])
+	{
+		<span class="reserved_key2">if</span>(strcmp(res_kwords_data[idx++], word) == <span class="numeric_constant">0)</span>
+			<span class="reserved_key2">return</span> RES_KEYWORD_DATA;
+	}
+
+	idx = <span class="numeric_constant">0</span>; <span class="comment">// reset index
+</span>	<span class="comment">/* search for non data type reserved key word */</span>
+	<span class="reserved_key2">while</span>(*res_kwords_non_data[idx])
+	{
+		<span class="reserved_key2">if</span>(strcmp(res_kwords_non_data[idx++], word) == <span class="numeric_constant">0)</span>
+			<span class="reserved_key2">return</span> RES_KEYWORD_NON_DATA;
+	}
+
+	<span class="reserved_key2">return</span> <span class="numeric_constant">0</span>; <span class="comment">// word did not match, return false
+</span>}
+
+<span class="comment">/* function to check symbols */</span>
+<span class="reserved_key1">static</span> <span class="reserved_key1">int</span> is_symbol(<span class="reserved_key1">char</span> c)
+{
+	<span class="reserved_key1">int</span> idx;
+	<span class="reserved_key2">for</span>(idx = <span class="numeric_constant">0</span>; idx < SIZE_OF_SYMBOLS; idx++)
+	{
+		<span class="reserved_key2">if</span>(symbols[idx] == c)
+			<span class="reserved_key2">return</span> <span class="numeric_constant">1</span>;
+	}
+
+	<span class="reserved_key2">return</span> <span class="numeric_constant">0</span>;
+}
+
+<span class="comment">/* function to check operator */</span>
+<span class="reserved_key1">static</span> <span class="reserved_key1">int</span> is_operator(<span class="reserved_key1">char</span> c)
+{
+	<span class="reserved_key1">int</span> idx;
+	<span class="reserved_key2">for</span>(idx = <span class="numeric_constant">0</span>; idx < SIZE_OF_OPERATORS; idx++)
+	{
+		<span class="reserved_key2">if</span>(operators[idx] == c)
+			<span class="reserved_key2">return</span> <span class="numeric_constant">1</span>;
+	}
+
+	<span class="reserved_key2">return</span> <span class="numeric_constant">0</span>;
+}
+
+<span class="comment">/* to set parser event */</span>
+<span class="reserved_key1">static</span> <span class="reserved_key1">void</span> set_parser_event(pstate_e s, pevent_e e)
+{
+	pevent_data.data[event_data_idx] = <span class="ascii_char">'\0'</span>;
+	pevent_data.length = event_data_idx;
+	event_data_idx = <span class="numeric_constant">0</span>;
+	state = s;
+	pevent_data.type = e;
+}
+
+
+<span class="comment">/************ Event functions **********/</span>
+
+<span class="comment">/* This function parses the source file and generate 
+ * event based on parsed characters and string
+ */</span>
+pevent_t *get_parser_event(FILE *fd)
+{
+	<span class="reserved_key1">int</span> ch, pre_ch;
+	pevent_t *evptr = NULL;
+	<span class="comment">/* Read char by char */</span>
+	<span class="reserved_key2">while</span>((ch = fgetc(fd)) != EOF)
+	{
+<span class="preprocess_dir">#ifdef DEBUG
+</span>	<span class="comment">//	putchar(ch);
+</span><span class="preprocess_dir">#endif
+</span>		<span class="reserved_key2">switch</span>(state)
+		{
+			<span class="reserved_key2">case</span> PSTATE_IDLE :
+				<span class="reserved_key2">if</span>((evptr = pstate_idle_handler(fd, ch)) != NULL)
+					<span class="reserved_key2">return</span> evptr;
+				<span class="reserved_key2">break</span>;
+			<span class="reserved_key2">case</span> PSTATE_SINGLE_LINE_COMMENT :
+				<span class="reserved_key2">if</span>((evptr = pstate_single_line_comment_handler(fd, ch)) != NULL)
+					<span class="reserved_key2">return</span> evptr;
+				<span class="reserved_key2">break</span>;
+			<span class="reserved_key2">case</span> PSTATE_MULTI_LINE_COMMENT :
+				<span class="reserved_key2">if</span>((evptr = pstate_multi_line_comment_handler(fd, ch)) != NULL)
+					<span class="reserved_key2">return</span> evptr;
+				<span class="reserved_key2">break</span>;
+			<span class="reserved_key2">case</span> PSTATE_PREPROCESSOR_DIRECTIVE :
+				<span class="reserved_key2">if</span>((evptr = pstate_preprocessor_directive_handler(fd, ch)) != NULL)
+					<span class="reserved_key2">return</span> evptr;
+				<span class="reserved_key2">break</span>;
+			<span class="reserved_key2">case</span> PSTATE_RESERVE_KEYWORD :
+				<span class="reserved_key2">if</span>((evptr = pstate_reserve_keyword_handler(fd, ch)) != NULL)
+					<span class="reserved_key2">return</span> evptr;
+				<span class="reserved_key2">break</span>;
+			<span class="reserved_key2">case</span> PSTATE_NUMERIC_CONSTANT :
+				<span class="reserved_key2">if</span>((evptr = pstate_numeric_constant_handler(fd, ch)) != NULL)
+					<span class="reserved_key2">return</span> evptr;
+				<span class="reserved_key2">break</span>;
+			<span class="reserved_key2">case</span> PSTATE_STRING :
+				<span class="reserved_key2">if</span>((evptr = pstate_string_handler(fd, ch)) != NULL)
+					<span class="reserved_key2">return</span> evptr;
+				<span class="reserved_key2">break</span>;
+			<span class="reserved_key2">case</span> PSTATE_HEADER_FILE :
+				<span class="reserved_key2">if</span>((evptr = pstate_header_file_handler(fd, ch)) != NULL)
+					<span class="reserved_key2">return</span> evptr;
+				<span class="reserved_key2">break</span>;
+			<span class="reserved_key2">case</span> PSTATE_ASCII_CHAR :
+				<span class="reserved_key2">if</span>((evptr = pstate_ascii_char_handler(fd, ch)) != NULL)
+					<span class="reserved_key2">return</span> evptr;
+				<span class="reserved_key2">break</span>;
+			<span class="reserved_key2">default</span> : 
+				printf(<span class="string">"unknown state\n"</span>);
+				state = PSTATE_IDLE;
+				<span class="reserved_key2">break</span>;
+		}
+	}
+
+	<span class="comment">/* end of file is reached, move back to idle state and set EOF event */</span>
+	set_parser_event(PSTATE_IDLE, PEVENT_EOF);
+
+	<span class="reserved_key2">return</span> &pevent_data; <span class="comment">// return final event
+</span>}
+
+
+<span class="comment">/********** IDLE state Handler **********
+ * Idle state handler identifies
+ ****************************************/</span>
+
+pevent_t * pstate_idle_handler(FILE *fd, <span class="reserved_key1">int</span> ch)
+{
+	
+	<span class="reserved_key1">int</span> pre_ch;
+	<span class="reserved_key2">switch</span>(ch)
+	{
+		<span class="reserved_key2">case</span> <span class="ascii_char">'\'</span><span class="ascii_char">' : // begining of ASCII char 
+			state = PSTATE_ASCII_CHAR;
+			pevent_data.data[event_data_idx++] = ch;
+			break;
+
+		case '</span>/' :
+			pre_ch = ch;
+			<span class="reserved_key2">if</span>((ch = fgetc(fd)) == <span class="ascii_char">'*'</span>) <span class="comment">// multi line comment
+</span>			{
+				<span class="reserved_key2">if</span>(event_data_idx) <span class="comment">// we have regular exp in buffer first process that
+</span>				{
+					fseek(fd, -<span class="numeric_constant">2L</span>, SEEK_CUR); <span class="comment">// unget chars
+</span>					set_parser_event(PSTATE_IDLE, PEVENT_REGULAR_EXP);
+					<span class="reserved_key2">return</span> &pevent_data;
+				}
+				<span class="reserved_key2">else</span> <span class="comment">//	multi line comment begin 
+</span>				{
+<span class="preprocess_dir">#ifdef DEBUG	
+</span>					printf(<span class="string">"Multi line comment Begin : /*\n"</span>);
+<span class="preprocess_dir">#endif
+</span>					state = PSTATE_MULTI_LINE_COMMENT;
+					pevent_data.data[event_data_idx++] = pre_ch;
+					pevent_data.data[event_data_idx++] = ch;
+				}
+			}
+			<span class="reserved_key2">else</span> <span class="reserved_key2">if</span>(ch == <span class="ascii_char">'/'</span>) <span class="comment">// single line comment
+</span>			{
+				<span class="reserved_key2">if</span>(event_data_idx) <span class="comment">// we have regular exp in buffer first process that
+</span>				{
+					fseek(fd, -<span class="numeric_constant">2L</span>, SEEK_CUR); <span class="comment">// unget chars
+</span>					set_parser_event(PSTATE_IDLE, PEVENT_REGULAR_EXP);
+					<span class="reserved_key2">return</span> &pevent_data;
+				}
+				<span class="reserved_key2">else</span> <span class="comment">//	single line comment begin
+</span>				{
+<span class="preprocess_dir">#ifdef DEBUG	
+</span>					printf(<span class="string">"Single line comment Begin : //\n"</span>);
+<span class="preprocess_dir">#endif
+</span>					state = PSTATE_SINGLE_LINE_COMMENT;
+					pevent_data.data[event_data_idx++] = pre_ch;
+					pevent_data.data[event_data_idx++] = ch;
+				}
+			}
+			<span class="reserved_key2">else</span> <span class="comment">// it is regular exp
+</span>			{
+				pevent_data.data[event_data_idx++] = pre_ch;
+				pevent_data.data[event_data_idx++] = ch;
+			}
+			<span class="reserved_key2">break</span>;
+		<span class="reserved_key2">case</span> <span class="ascii_char">'#'</span> :
+				state = PSTATE_PREPROCESSOR_DIRECTIVE;
+				pevent_data.data[event_data_idx++] = ch;
+			<span class="reserved_key2">break</span>;
+		<span class="reserved_key2">case</span> <span class="ascii_char">'\"'</span> :
+			state = PSTATE_STRING;
+			pevent_data.data[event_data_idx++] = ch;
+			<span class="reserved_key2">break</span>;
+
+		<span class="reserved_key2">case</span> <span class="ascii_char">'0'</span> ... <span class="ascii_char">'9'</span> : <span class="comment">// detect numeric constant
+</span>			state = PSTATE_NUMERIC_CONSTANT;
+			pevent_data.data[event_data_idx++] = ch;
+			<span class="reserved_key2">break</span>;
+
+		<span class="reserved_key2">case</span> <span class="ascii_char">'a'</span> ... <span class="ascii_char">'z'</span> : <span class="comment">// could be reserved key word
+</span>			state = PSTATE_RESERVE_KEYWORD;
+			pevent_data.data[event_data_idx++] = ch;
+			<span class="reserved_key2">break</span>;
+
+		<span class="reserved_key2">default</span> : <span class="comment">// Assuming common text starts by default.
+</span>			pevent_data.data[event_data_idx++] = ch;
+			set_parser_event(PSTATE_IDLE,PEVENT_REGULAR_EXP);
+			<span class="reserved_key2">return</span> &pevent_data;
+			<span class="reserved_key2">break</span>;
+	}
+	<span class="reserved_key2">return</span> NULL;
+}
+pevent_t * pstate_preprocessor_directive_handler(FILE *fd, <span class="reserved_key1">int</span> ch)
+{
+	<span class="reserved_key2">switch</span>(ch)
+	{
+		<span class="reserved_key2">case</span> <span class="ascii_char">'\n'</span> : pevent_data.data[event_data_idx++] = ch;
+					set_parser_event(PSTATE_IDLE,PEVENT_PREPROCESSOR_DIRECTIVE);
+					<span class="reserved_key2">return</span> &pevent_data;
+		<span class="reserved_key2">case</span> <span class="ascii_char">'<'</span> : 	ungetc(ch,fd);
+					set_parser_event(PSTATE_HEADER_FILE,PEVENT_PREPROCESSOR_DIRECTIVE);
+					<span class="reserved_key2">return</span> &pevent_data;
+					<span class="reserved_key2">break</span>;
+		<span class="reserved_key2">case</span> <span class="ascii_char">'0'</span>...<span class="ascii_char">'9'</span> : <span class="comment">//pevent_data.data[event_data_idx++] = ch;
+</span>						set_parser_event(PSTATE_NUMERIC_CONSTANT,PEVENT_PREPROCESSOR_DIRECTIVE);
+						ungetc(ch,fd);
+						<span class="reserved_key2">return</span> &pevent_data;
+		<span class="reserved_key2">case</span> <span class="ascii_char">'"'</span> : set_parser_event(PSTATE_HEADER_FILE,PEVENT_PREPROCESSOR_DIRECTIVE);
+					user_flag = <span class="numeric_constant">1</span>;
+					<span class="reserved_key2">return</span> &pevent_data;
+					<span class="reserved_key2">break</span>;
+		<span class="reserved_key2">case</span> <span class="ascii_char">'('</span> : set_parser_event(PSTATE_IDLE,PEVENT_PREPROCESSOR_DIRECTIVE);
+					ungetc(ch,fd);
+					<span class="reserved_key2">return</span> &pevent_data;
+					<span class="reserved_key2">break</span>;
+		<span class="reserved_key2">default</span> :  pevent_data.data[event_data_idx++] = ch;	
+					<span class="reserved_key2">break</span>;
+	}
+	<span class="reserved_key2">return</span> NULL;
+}
+
+pevent_t * pstate_header_file_handler(FILE *fd, <span class="reserved_key1">int</span> ch)
+{
+    <span class="comment">// If 'user_flag' is set, it indicates the start of a user-defined header file ("...").
+</span>    <span class="comment">// We insert a double quote (") at the beginning.
+</span>    <span class="reserved_key2">if</span>(user_flag)
+    {
+        pevent_data.data[event_data_idx++] = <span class="ascii_char">'"'</span>;
+        user_flag = <span class="numeric_constant">0</span>;  <span class="comment">// Reset the flag after marking the start.
+</span>    }
+
+    <span class="comment">// Handle special character '<' (beginning of a standard header file).
+</span>    <span class="reserved_key2">if</span>(ch == <span class="ascii_char">'<'</span>)
+    {
+        <span class="comment">// Convert '<' to its HTML-safe equivalent "&lt;"
+</span>        pevent_data.data[event_data_idx++] = <span class="ascii_char">'&'</span>;
+        pevent_data.data[event_data_idx++] = <span class="ascii_char">'l'</span>;
+        pevent_data.data[event_data_idx++] = <span class="ascii_char">'t'</span>;
+    }
+    <span class="comment">// Handle special character '>' (end of a standard header file).
+</span>    <span class="reserved_key2">else</span> <span class="reserved_key2">if</span>(ch == <span class="ascii_char">'>'</span>)
+    {
+        <span class="comment">// Convert '>' to its HTML-safe equivalent "&gt;"
+</span>        pevent_data.data[event_data_idx++] = <span class="ascii_char">'&'</span>;
+        pevent_data.data[event_data_idx++] = <span class="ascii_char">'g'</span>;
+        pevent_data.data[event_data_idx++] = <span class="ascii_char">'t'</span>;
+
+        <span class="comment">// Mark parsing as complete and set event type to PEVENT_HEADER_FILE.
+</span>        set_parser_event(PSTATE_IDLE, PEVENT_HEADER_FILE);
+
+        <span class="comment">// Set property to indicate it was a standard header file.
+</span>        pevent_data.property = STD_HEADER_FILE;
+        <span class="reserved_key2">return</span> &pevent_data;  <span class="comment">// Return parsed event data.
+</span>    }
+    <span class="comment">// Handle user-defined header files enclosed in double quotes (").
+</span>    <span class="reserved_key2">else</span> <span class="reserved_key2">if</span>(ch == <span class="ascii_char">'"'</span>)
+    {
+        <span class="comment">// Store the double quote character (").
+</span>        pevent_data.data[event_data_idx++] = ch;
+
+        <span class="comment">// Mark parsing as complete and set event type to PEVENT_HEADER_FILE.
+</span>        set_parser_event(PSTATE_IDLE, PEVENT_HEADER_FILE);
+
+        <span class="comment">// Set property to indicate it was a user-defined header file.
+</span>        pevent_data.property = USER_HEADER_FILE;
+        <span class="reserved_key2">return</span> &pevent_data;  <span class="comment">// Return parsed event data.
+</span>    }
+    <span class="reserved_key2">else</span>
+    {
+        <span class="comment">// Store regular characters inside the header file name.
+</span>        pevent_data.data[event_data_idx++] = ch;
+    }
+
+    <span class="comment">// Return NULL to indicate parsing is still in progress.
+</span>    <span class="reserved_key2">return</span> NULL;
+}
+pevent_t * pstate_reserve_keyword_handler(FILE *fd, <span class="reserved_key1">int</span> ch)
+{
+    <span class="comment">// Store the first character of the keyword
+</span>    pevent_data.data[event_data_idx++] = ch;
+
+    <span class="comment">// Read subsequent alphanumeric characters and underscores ('_') to form the keyword
+</span>    <span class="reserved_key2">while</span>(isalnum(ch = fgetc(fd)) || ch == <span class="ascii_char">'_'</span>)
+    {
+        pevent_data.data[event_data_idx++] = ch;
+    }
+
+    <span class="comment">// Move file pointer back one position after reading the first non-matching character
+</span>    fseek(fd, -<span class="numeric_constant">1L</span>, SEEK_CUR);
+
+    <span class="comment">// Null-terminate the extracted keyword string
+</span>    pevent_data.data[event_data_idx] = <span class="ascii_char">'\0'</span>;
+
+    <span class="comment">// Check if the extracted string is a reserved keyword
+</span>    <span class="reserved_key2">if</span>(is_reserved_keyword(pevent_data.data) == RES_KEYWORD_DATA)
+    {
+        printf(<span class="string">"DEBUG : %s\n"</span>, pevent_data.data);
+        set_parser_event(PSTATE_IDLE, PEVENT_RESERVE_KEYWORD);
+        pevent_data.property = RES_KEYWORD_DATA;
+    }
+    <span class="comment">// Check if the extracted string is a reserved keyword (non-data type)
+</span>    <span class="reserved_key2">else</span> <span class="reserved_key2">if</span>(is_reserved_keyword(pevent_data.data) == RES_KEYWORD_NON_DATA)
+    {
+        printf(<span class="string">"DEBUG_1 : %s\n"</span>, pevent_data.data);
+        set_parser_event(PSTATE_IDLE, PEVENT_RESERVE_KEYWORD);
+        pevent_data.property = RES_KEYWORD_NON_DATA;
+    }
+    <span class="comment">// If not a reserved keyword, treat it as a regular expression
+</span>    <span class="reserved_key2">else</span>
+    {
+        set_parser_event(PSTATE_IDLE, PEVENT_REGULAR_EXP);
+    }
+
+    <span class="reserved_key2">return</span> &pevent_data;  <span class="comment">// Return parsed event data
+</span>}
+
+pevent_t * pstate_numeric_constant_handler(FILE *fd, <span class="reserved_key1">int</span> ch)
+{
+    <span class="comment">// Store the first character of the numeric constant
+</span>    pevent_data.data[event_data_idx++] = ch;
+
+    <span class="comment">// If the first character is ';', it's not part of a numeric constant, so put it back
+</span>    <span class="reserved_key2">if</span>(ch == <span class="ascii_char">';'</span>)
+    {
+        ungetc(ch, fd);  <span class="comment">// Push the character back to the stream
+</span>        event_data_idx--; <span class="comment">// Remove it from the stored data
+</span>    }
+
+    <span class="comment">// Read characters until a delimiter is found (';', '\n', ',', '(', ')')
+</span>    <span class="reserved_key2">while</span>((ch = fgetc(fd)) != <span class="ascii_char">';'</span> && ch != <span class="ascii_char">'\n'</span> && ch != <span class="ascii_char">','</span> && ch != <span class="ascii_char">'('</span> && ch != <span class="ascii_char">')'</span>)
+    {
+        pevent_data.data[event_data_idx++] = ch;
+    }
+
+    <span class="comment">// Move file pointer back by one position after reading the first non-matching character
+</span>    fseek(fd, -<span class="numeric_constant">1L</span>, SEEK_CUR);
+
+    <span class="comment">// Set the parser state to indicate a numeric constant has been processed
+</span>    set_parser_event(PSTATE_IDLE, PEVENT_NUMERIC_CONSTANT);
+
+    <span class="comment">// Return parsed numeric constant data
+</span>    <span class="reserved_key2">return</span> &pevent_data;
+}
+
+
+pevent_t * pstate_string_handler(FILE *fd, <span class="reserved_key1">int</span> ch)
+{
+    <span class="comment">// If the first character is a double quote (starting a string)
+</span>    <span class="reserved_key2">if</span>(ch == <span class="ascii_char">'"'</span>)
+    {
+        pevent_data.data[event_data_idx++] = ch;  <span class="comment">// Store the quote
+</span>        <span class="reserved_key2">goto</span> label;  <span class="comment">// Jump to setting the parser event
+</span>    }
+
+    <span class="comment">// Store the first character if it's not a quote
+</span>    pevent_data.data[event_data_idx++] = ch;
+
+    <span class="comment">// Read and store characters until the closing double quote is found
+</span>    <span class="reserved_key2">while</span>((ch = fgetc(fd)) != <span class="ascii_char">'"'</span>)
+    {
+        pevent_data.data[event_data_idx++] = ch;
+    }
+
+    <span class="comment">// Store the closing quote
+</span>    pevent_data.data[event_data_idx++] = ch;
+
+label:
+    <span class="comment">// Set the parser state to indicate a string literal has been processed
+</span>    set_parser_event(PSTATE_IDLE, PEVENT_STRING);
+    
+    <span class="comment">// Return parsed string data
+</span>    <span class="reserved_key2">return</span> &pevent_data;
+}
+
+
+pevent_t * pstate_single_line_comment_handler(FILE *fd, <span class="reserved_key1">int</span> ch)
+{
+	<span class="reserved_key1">int</span> pre_ch;
+	<span class="reserved_key2">switch</span>(ch)
+	{
+		<span class="reserved_key2">case</span> <span class="ascii_char">'\n'</span> : <span class="comment">/* single line comment ends here */</span>
+<span class="preprocess_dir">#ifdef DEBUG	
+</span>			printf(<span class="string">"\nSingle line comment end\n"</span>);
+<span class="preprocess_dir">#endif
+</span>			pre_ch = ch;
+			pevent_data.data[event_data_idx++] = ch;
+			set_parser_event(PSTATE_IDLE, PEVENT_SINGLE_LINE_COMMENT);
+			<span class="reserved_key2">return</span> &pevent_data;
+		<span class="reserved_key2">default</span> :  <span class="comment">// collect single line comment chars
+</span>			pevent_data.data[event_data_idx++] = ch;
+			<span class="reserved_key2">break</span>;
+	}
+
+	<span class="reserved_key2">return</span> NULL;
+}
+pevent_t * pstate_multi_line_comment_handler(FILE *fd, <span class="reserved_key1">int</span> ch)
+{
+	<span class="reserved_key1">int</span> pre_ch;
+	<span class="reserved_key2">switch</span>(ch)
+	{
+		<span class="reserved_key2">case</span> <span class="ascii_char">'*'</span> : <span class="comment">/* comment might end here */</span>
+			pre_ch = ch;
+			pevent_data.data[event_data_idx++] = ch;
+			<span class="reserved_key2">if</span>((ch = fgetc(fd)) == <span class="ascii_char">'/'</span>)
+			{
+<span class="preprocess_dir">#ifdef DEBUG	
+</span>				printf(<span class="string">"\nMulti line comment End : */\n"</span>);
+<span class="preprocess_dir">#endif
+</span>				pre_ch = ch;
+				pevent_data.data[event_data_idx++] = ch;
+				set_parser_event(PSTATE_IDLE, PEVENT_MULTI_LINE_COMMENT);
+				<span class="reserved_key2">return</span> &pevent_data;
+			}
+			<span class="reserved_key2">else</span> <span class="comment">// multi line comment string still continued
+</span>			{
+				pevent_data.data[event_data_idx++] = ch;
+			}
+			<span class="reserved_key2">break</span>;
+		<span class="reserved_key2">case</span> <span class="ascii_char">'/'</span> :
+			<span class="comment">/* go back by two steps and read previous char */</span>
+			fseek(fd, -<span class="numeric_constant">2L</span>, SEEK_CUR); <span class="comment">// move two steps back
+</span>			pre_ch = fgetc(fd); <span class="comment">// read a char
+</span>			fgetc(fd); <span class="comment">// to come back to current offset
+</span>
+			pevent_data.data[event_data_idx++] = ch;
+			<span class="reserved_key2">if</span>(pre_ch == <span class="ascii_char">'*'</span>)
+			{
+				set_parser_event(PSTATE_IDLE, PEVENT_MULTI_LINE_COMMENT);
+				<span class="reserved_key2">return</span> &pevent_data;
+			}
+			<span class="reserved_key2">break</span>;
+		<span class="reserved_key2">default</span> :  <span class="comment">// collect multi-line comment chars
+</span>			pevent_data.data[event_data_idx++] = ch;
+			<span class="reserved_key2">break</span>;
+	}
+
+	<span class="reserved_key2">return</span> NULL;
+}
+pevent_t * pstate_ascii_char_handler(FILE *fd, <span class="reserved_key1">int</span> ch)
+{
+    <span class="comment">// Store the first character in the parsing buffer
+</span>    pevent_data.data[event_data_idx++] = ch;
+
+    <span class="comment">// If the character is a single quote (indicating the end of a character literal)
+</span>    <span class="reserved_key2">if</span>(ch == <span class="ascii_char">'\'</span>')
+    {
+        // Set the parser state to indicate an ASCII character literal has been processed
+        set_parser_event(PSTATE_IDLE, PEVENT_ASCII_CHAR);
+        return &pevent_data;  // Return the parsed character data
+    }
+
+    // Return NULL if the character literal is not yet fully parsed
+    return NULL;
+}
+/**** End of file ****/
+</pre>
+</body>
+</html>
